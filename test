@@ -1,16 +1,107 @@
-from machine import Pin
+import machine
 import time
+import displayio
+import adafruit_ili9341
 
-# Initialisiere Pin 2 (LED)
-led = Pin(2, Pin.OUT)
+# COM1-Einstellungen
+com1_port = machine.UART(1, baudrate=1200, tx=17, rx=16, bits=8, parity=None, stop=1)  # COM1-Schnittstelle (GPIO 17 und 16)
 
-# Blink-Funktion
-def blink_led():
-    while True:
-        led.value(1)  # LED einschalten
-        time.sleep(1)  # 1 Sekunde warten
-        led.value(0)  # LED ausschalten
-        time.sleep(1)  # 1 Sekunde warten
+# COM2-Einstellungen
+com2_port = machine.UART(2, baudrate=9600, tx=19, rx=18)  # COM2-Schnittstelle (GPIO 19 und 18)
 
-# Starte die Blink-Funktion
-blink_led()
+# GPIO-Pins für die Taster
+taster_senden_pin = machine.Pin(5, machine.Pin.IN, machine.Pin.PULL_UP)
+taster_loeschen_pin = machine.Pin(4, machine.Pin.IN, machine.Pin.PULL_UP)  # Beispiel-Pin (anpassen)
+
+# I2C-Pins für das ILI9341 OLED-Display (anpassen)
+spi = machine.SPI(sck=machine.Pin(14), mosi=machine.Pin(13))
+tft_cs = machine.Pin(15)
+tft_dc = machine.Pin(12)
+display_bus = displayio.FourWire(spi, command=tft_dc, chip_select=tft_cs)
+display = adafruit_ili9341.ILI9341(display_bus, width=320, height=240)
+
+data_buffer = []  # Puffer für empfangene Daten
+
+def show_data_on_display(data):
+    display.fill(0)  # Display löschen
+    display.text("Empfangene Daten:", 0, 0)
+    display.text(data, 0, 20)  # Zeigen Sie die Daten an
+
+    # Anzeige der Baudrate
+    analog_value_com1 = machine.ADC(0).read()  # Analogwert für COM1 auslesen
+    com1_baudrate = set_com1_baudrate(analog_value_com1)
+    display.text(f"Baudrate COM1: {com1_baudrate}", 0, 40)
+
+    analog_value_com2 = machine.ADC(1).read()  # Analogwert für COM2 auslesen
+    com2_baudrate = set_com2_baudrate(analog_value_com2)
+    display.text(f"Baudrate COM2: {com2_baudrate}", 0, 60)
+
+    display.show()
+
+def set_com1_baudrate(analog_value):
+    min_analog = 0
+    max_analog = 1023
+    min_baudrate = 300  # Mindestbaudrate für COM1
+    max_baudrate = 9600  # Maximale Baudrate für COM1
+    scaled_value = (analog_value - min_analog) / (max_analog - min_analog)
+    com1_baudrate = int(min_baudrate + scaled_value * (max_baudrate - min_baudrate))
+    return com1_baudrate
+
+def set_com2_baudrate(analog_value):
+    min_analog = 0
+    max_analog = 1023
+    min_baudrate = 4800
+    max_baudrate = 115200
+    scaled_value = (analog_value - min_analog) / (max_analog - min_analog)
+    com2_baudrate = int(min_baudrate + scaled_value * (max_baudrate - min_baudrate))
+    return com2_baudrate
+def main():
+    # COM1 initialisieren
+    com1 = machine.UART(1, baudrate=1200, tx=17, rx=16)  # COM1-Schnittstelle (GPIO 17 und 16)
+
+    # COM2 initialisieren
+    com2 = machine.UART(2, baudrate=9600, tx=19, rx=18)  # COM2-Schnittstelle (GPIO 19 und 18)
+
+    # GPIO initialisieren
+    taster_senden_pin = machine.Pin(5, machine.Pin.IN, machine.Pin.PULL_UP)
+    taster_loeschen_pin = machine.Pin(4, machine.Pin.IN, machine.Pin.PULL_UP)  # Beispiel-Pin (anpassen)
+
+    try:
+        while True:
+            data = com1_port.read()  # Daten von COM1 lesen
+            data_str = data.decode("utf-8")  # Bytes in String umwandeln
+            data_buffer.append(data_str)  # Daten im Puffer speichern
+
+            if taster_senden_pin.value() == 0:
+                # Taster "Senden" gedrückt: Daten über COM2 senden
+                for item in data_buffer:
+                    com2_port.write(item.encode("utf-8"))
+                data_buffer.clear()  # Puffer leeren
+
+            if taster_loeschen_pin.value() == 0:
+                # Taster "Löschen" gedrückt: Puffer leeren
+            data_buffer.clear()
+
+            # Analogwert für COM1 auslesen und Baudrate aktualisieren
+            analog_value_com1 = machine.ADC(0).read()
+            com1_baudrate = set_com1_baudrate(analog_value_com1)
+            com1.init(baudrate=com1_baudrate)
+
+            # Analogwert für COM2 auslesen und Baudrate aktualisieren
+            analog_value_com2 = machine.ADC(1).read()
+            com2_baudrate = set_com2_baudrate(analog_value_com2)
+            com2.init(baudrate=com2_baudrate)
+
+            time.sleep(0.1)  # Kurze Pause
+
+    except KeyboardInterrupt:
+        print("Skript beendet.")
+        # ... (Aufräumarbeiten)
+	com1.deinit()
+	com2.deinit()
+	taster_senden_pin.deinit()
+	taster_loeschen_pin.deinit()
+	display.deinit()
+
+if __name__ == "__main__":
+    main()
